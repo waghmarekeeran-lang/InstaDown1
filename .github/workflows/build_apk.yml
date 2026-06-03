@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,21 +26,60 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Create .env
-        run: echo "RAPIDAPI_KEY=${{ secrets.RAPIDAPI_KEY }}" > .env
+      # ── Show repo structure so we can debug if needed ─────────────────
+      - name: Show repo contents
+        run: |
+          echo "=== Root files ==="
+          ls -la
+          echo ""
+          echo "=== Looking for pubspec.yaml ==="
+          find . -name "pubspec.yaml" -not -path "*/.git/*" | head -10
 
+      # ── Find pubspec.yaml wherever it is and set PROJECT_DIR ──────────
+      - name: Locate Flutter project root
+        run: |
+          PUBSPEC=$(find . -name "pubspec.yaml" \
+            -not -path "*/.git/*" \
+            -not -path "*/build/*" | head -1)
+          if [ -z "$PUBSPEC" ]; then
+            echo "❌ ERROR: pubspec.yaml not found anywhere in the repo."
+            echo "Please upload the Flutter project files."
+            exit 1
+          fi
+          PROJECT_DIR=$(dirname "$PUBSPEC")
+          echo "✅ Flutter project found at: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+
+      # ── Create .env in the project root ───────────────────────────────
+      - name: Create .env
+        run: |
+          echo "RAPIDAPI_KEY=${{ secrets.RAPIDAPI_KEY }}" \
+            > ${{ env.PROJECT_DIR }}/.env
+          echo "✅ .env created"
+
+      # ── Accept Android licenses ───────────────────────────────────────
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses || true
 
+      # ── Get dependencies ──────────────────────────────────────────────
       - name: Get dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
         run: flutter pub get
 
+      # ── Build release APK ─────────────────────────────────────────────
       - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
         run: flutter build apk --release --no-shrink
 
+      # ── Upload APK as downloadable artifact ───────────────────────────
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: InstaDown-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
+
+      - name: Done
+        run: |
+          APK="${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk"
+          echo "✅ APK size: $(du -sh $APK | cut -f1)"
